@@ -1,77 +1,86 @@
 #include <Arduino.h>
-
+#define LED 19 //LED sur GPIO 19
+// handle des taches
+TaskHandle_t handle_reception;
+TaskHandle_t handle_clignotant;
+TaskHandle_t handle_affichage;
 SemaphoreHandle_t mutex;
+QueueHandle_t queue;
 
-void tache1(void *parametres)
+void reception(void *)
 {
-    int i = 0;
+    String commande;
+    handle_reception = xTaskGetCurrentTaskHandle();
     while (1)
     {
-        if (mutex)
+        commande = Serial.readString(); // recupère la commande
+        Serial.printf("%s\n", commande); // affiche la commande
+        if(commande == "off")
         {
-            // See if we can obtain the mutex.  If the mutex is not available
-            // wait 10 ticks to see if it becomes free.
-            if (xSemaphoreTake(mutex, portMAX_DELAY))
-            {
-                // prend le mutex
-                Serial.printf("Dans la tâche 1 : ", i);
-                delay(1);
-                Serial.printf("%d\n", i);
-                i++;
-                xSemaphoreGive(mutex);
-            }
+            vTaskSuspend(handle_clignotant); // suspend la tache clignotant
+            digitalWrite(LED, LOW); // eteint la LED
         }
-        delay(1000);
+        if(commande == "on"){
+            vTaskResume(handle_clignotant);
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
-void tache2(void *parametres)
+void clignotant(void *)
 {
-    int i = 100;
+    boolean etatLED = false;
+    int compteur_cligno = 0;
+    handle_clignotant = xTaskGetCurrentTaskHandle();
+    vTaskSuspend(handle_clignotant);
     while (1)
     {
-        if (mutex)
+        etatLED = !etatLED; //inverse l'etat de la led
+        digitalWrite(LED, etatLED);
+        compteur_cligno++;
+        if(compteur_cligno == 5)
         {
-            // See if we can obtain the mutex.  If the mutex is not available
-            // wait 10 ticks to see if it becomes free.
-            if (xSemaphoreTake(mutex, portMAX_DELAY))
+            compteur_cligno = 0; // reset le compteur
+            xQueueSend(queue, &compteur_cligno, portMAX_DELAY);
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+}
+
+void affichage(void *)
+{
+    int compteur;
+    handle_affichage = xTaskGetCurrentTaskHandle();
+    while (1)
+    {
+        if(xQueueReceive(queue, &compteur, portMAX_DELAY))
+        {
+            if(mutex)
             {
-                // prend le mutex
-                Serial.printf("Dans la tâche 2 : ", i);
-                delay(1);
-                Serial.printf("%d\n", i);
-                i++;
-                xSemaphoreGive(mutex);
+                // att que le mutex est dispo
+                if(xSemaphoreTake(mutex, portMAX_DELAY))
+                {
+                    Serial.printf("100 clignotement atteint");
+                    xSemaphoreGive(mutex); // rend le mutex
+                }
             }
         }
-        delay(1000);
+        vTaskDelay(pdMS_TO_TICKS(500));
     }
 }
 
 void setup()
 {
     Serial.begin(115200);
-    while (!Serial)
-        ;
-    Serial.printf("Départ\n");
-    xTaskCreate(
-        tache1,    /* Fonction de la tâche. */
-        "Tâche 1", /* Nom de la tâche. */
-        10000,     /* Taille de la pile de la tâche */
-        NULL,      /* Paramètres de la tâche, NULL si pas de paramètre */
-        1,         /* Priorité de la tâche */
-        NULL);     /* Pointeur pour récupérer le « handle » de la tâche, optionnel */
-    xTaskCreate(
-        tache2,    /* Fonction de la tâche. */
-        "Tâche 2", /* Nom de la tâche. */
-        10000,     /* Taille de la pile de la tâche */
-        NULL,      /* Paramètres de la tâche, NULL si pas de paramètre */
-        1,         /* Priorité de la tâche */
-        NULL);     /* Pointeur pour récupérer le « handle » de la tâche, optionnel */
+    while (!Serial);
+    pinMode(LED, OUTPUT); // LED sur GPIO 19
+    xTaskCreate(reception, "reception", 10000, NULL, 1, NULL);
+    xTaskCreate(clignotant, "clignotant", 10000, NULL, 1, NULL);
+    xTaskCreate(affichage, "affichage", 10000, NULL, 1, NULL);
     mutex = xSemaphoreCreateMutex();
+    queue = xQueueCreate(1, sizeof(int));
     vTaskDelete(NULL);
 }
 void loop()
 {
-    // Ne s'exécute pas
 }
